@@ -7,9 +7,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #8A2BE2; /* Lila */
-            --secondary-color: #87CEFA; /* Azul celeste */
-            --background-color: #FFFFFF; /* Blanco */
+            --primary-color: #8A2BE2;
+            --secondary-color: #87CEFA;
+            --background-color: #FFFFFF;
             --text-color: #1a1a1a;
             --card-background: #ffffff;
         }
@@ -225,57 +225,77 @@
         </div>
     </div>
 
+    <!-- Firebase App (the core Firebase SDK) is always required and must be listed first -->
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
+
+    <!-- Add Firebase products that you want to use -->
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-storage.js"></script>
+
     <script>
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+
+        // Initialize Firebase services
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const storage = firebase.storage();
+
         let recuerdoEditandoId = null;
         let usuarioActual = null;
 
         // Funciones de autenticación
         function iniciarSesion(email, password) {
-            const usuarios = JSON.parse(localStorage.getItem('usuarios')) || {};
-            if (usuarios[email] && usuarios[email].password === password) {
-                usuarioActual = email;
-                localStorage.setItem('usuarioActual', email);
-                return true;
-            }
-            return false;
+            return auth.signInWithEmailAndPassword(email, password);
         }
 
         function registrarUsuario(email, password) {
-            const usuarios = JSON.parse(localStorage.getItem('usuarios')) || {};
-            if (usuarios[email]) {
-                return false; // El usuario ya existe
-            }
-            usuarios[email] = { password: password, recuerdos: [] };
-            localStorage.setItem('usuarios', JSON.stringify(usuarios));
-            return true;
+            return auth.createUserWithEmailAndPassword(email, password);
         }
 
         function cerrarSesion() {
-            usuarioActual = null;
-            localStorage.removeItem('usuarioActual');
-            actualizarInterfaz();
+            return auth.signOut();
         }
 
         // Funciones de manejo de recuerdos
-        function cargarRecuerdos() {
+        async function cargarRecuerdos() {
             if (!usuarioActual) return [];
-            const usuarios = JSON.parse(localStorage.getItem('usuarios')) || {};
-            return usuarios[usuarioActual].recuerdos || [];
+            const snapshot = await db.collection('usuarios').doc(usuarioActual.uid).collection('recuerdos').get();
+            return snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
         }
 
-        function guardarRecuerdos(recuerdos) {
+        async function guardarRecuerdo(recuerdo) {
             if (!usuarioActual) return;
-            const usuarios = JSON.parse(localStorage.getItem('usuarios')) || {};
-            usuarios[usuarioActual].recuerdos = recuerdos;
-            localStorage.setItem('usuarios', JSON.stringify(usuarios));
+            await db.collection('usuarios').doc(usuarioActual.uid).collection('recuerdos').add(recuerdo);
         }
 
-        function mostrarRecuerdos() {
-            const recuerdos = cargarRecuerdos();
+        async function actualizarRecuerdo(id, recuerdo) {
+            if (!usuarioActual) return;
+            await db.collection('usuarios').doc(usuarioActual.uid).collection('recuerdos').doc(id).update(recuerdo);
+        }
+
+        async function borrarRecuerdo(id) {
+            if (!usuarioActual) return;
+            await db.collection('usuarios').doc(usuarioActual.uid).collection('recuerdos').doc(id).delete();
+        }
+
+        async function mostrarRecuerdos() {
+            const recuerdos = await cargarRecuerdos();
             const contenedorRecuerdos = document.getElementById('recuerdos');
             contenedorRecuerdos.innerHTML = '';
 
-            recuerdos.forEach((recuerdo, index) => {
+            recuerdos.forEach((recuerdo) => {
                 const elementoRecuerdo = document.createElement('div');
                 elementoRecuerdo.className = 'recuerdo';
                 elementoRecuerdo.innerHTML = `
@@ -284,15 +304,15 @@
                     <p>${recuerdo.descripcion}</p>
                     ${recuerdo.imagen ? `<img src="${recuerdo.imagen}" alt="Imagen del recuerdo">` : ''}
                     <div class="acciones">
-                        <button onclick="editarRecuerdo(${index})">Editar</button>
-                        <button onclick="borrarRecuerdo(${index})">Borrar</button>
+                        <button onclick="editarRecuerdo('${recuerdo.id}')">Editar</button>
+                        <button onclick="borrarRecuerdo('${recuerdo.id}')">Borrar</button>
                     </div>
                 `;
                 contenedorRecuerdos.appendChild(elementoRecuerdo);
             });
         }
 
-        function imagenABase64(file) {
+        async function imagenABase64(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -312,29 +332,27 @@
 
             let imagen = null;
             if (imagenFile) {
-                imagen = await imagenABase64(imagenFile);
+                const imagenRef = storage.ref(`imagenes/${usuarioActual.uid}/${Date.now()}_${imagenFile.name}`);
+                await imagenRef.put(imagenFile);
+                imagen = await imagenRef.getDownloadURL();
             }
 
             const nuevoRecuerdo = { fecha, titulo, descripcion, imagen };
-            const recuerdos = cargarRecuerdos();
-            recuerdos.push(nuevoRecuerdo);
-            guardarRecuerdos(recuerdos);
+            await guardarRecuerdo(nuevoRecuerdo);
 
             this.reset();
             mostrarRecuerdos();
         });
 
-        function borrarRecuerdo(index) {
-            const recuerdos = cargarRecuerdos();
-            recuerdos.splice(index, 1);
-            guardarRecuerdos(recuerdos);
+        async function borrarRecuerdo(id) {
+            await borrarRecuerdo(id);
             mostrarRecuerdos();
         }
 
-        function editarRecuerdo(index) {
-            const recuerdos = cargarRecuerdos();
-            const recuerdo = recuerdos[index];
-            recuerdoEditandoId = index;
+        async function editarRecuerdo(id) {
+            const recuerdos = await cargarRecuerdos();
+            const recuerdo = recuerdos.find(r => r.id === id);
+            recuerdoEditandoId = id;
 
             document.getElementById('editarFecha').value = recuerdo.fecha;
             document.getElementById('editarTitulo').value = recuerdo.titulo;
@@ -346,22 +364,22 @@
         document.getElementById('formularioEditar').addEventListener('submit', async function(e) {
             e.preventDefault();
 
-            const recuerdos = cargarRecuerdos();
+            const fecha = document.getElementById('editarFecha').value;
+            const titulo = document.getElementById('editarTitulo').value;
+            const descripcion = document.getElementById('editarDescripcion').value;
             const imagenFile = document.getElementById('editarImagen').files[0];
 
-            let imagen = recuerdos[recuerdoEditandoId].imagen;
+            let imagen = null;
             if (imagenFile) {
-                imagen = await imagenABase64(imagenFile);
+                const imagenRef = storage.ref(`imagenes/${usuarioActual.uid}/${Date.now()}_${imagenFile.name}`);
+                await imagenRef.put(imagenFile);
+                imagen = await imagenRef.getDownloadURL();
             }
 
-            recuerdos[recuerdoEditandoId] = {
-                fecha: document.getElementById('editarFecha').value,
-                titulo: document.getElementById('editarTitulo').value,
-                descripcion: document.getElementById('editarDescripcion').value,
-                imagen: imagen
-            };
+            const recuerdoActualizado = { fecha, titulo, descripcion };
+            if (imagen) recuerdoActualizado.imagen = imagen;
 
-            guardarRecuerdos(recuerdos);
+            await actualizarRecuerdo(recuerdoEditandoId, recuerdoActualizado);
             document.getElementById('modalEditar').style.display = 'none';
             mostrarRecuerdos();
         });
@@ -371,28 +389,29 @@
         });
 
         // Nuevos event listeners para el sistema de cuentas
-        document.getElementById('formularioLogin').addEventListener('submit', function(e) {
+        document.getElementById('formularioLogin').addEventListener('submit', async function(e) {
             e.preventDefault();
             const email = document.getElementById('loginEmail').value;
             const password = document.getElementById('loginPassword').value;
-            if (iniciarSesion(email, password)) {
+            try {
+                await iniciarSesion(email, password);
                 document.getElementById('modalLogin').style.display = 'none';
                 actualizarInterfaz();
-            } else {
-                alert('Correo electrónico o contraseña incorrectos');
+            } catch (error) {
+                alert('Error al iniciar sesión: ' + error.message);
             }
         });
 
-        document.getElementById('formularioRegistro').addEventListener('submit', function(e) {
+        document.getElementById('formularioRegistro').addEventListener('submit', async function(e) {
             e.preventDefault();
             const email = document.getElementById('registroEmail').value;
             const password = document.getElementById('registroPassword').value;
-            if (registrarUsuario(email, password)) {
-                iniciarSesion(email, password);
+            try {
+                await registrarUsuario(email, password);
                 document.getElementById('modalRegistro').style.display = 'none';
                 actualizarInterfaz();
-            } else {
-                alert('El correo electrónico ya está registrado');
+            } catch (error) {
+                alert('Error al registrarse: ' + error.message);
             }
         });
 
@@ -414,7 +433,7 @@
 
             if (usuarioActual) {
                 loginStatus.innerHTML = `
-                    <p>Sesión iniciada como: ${usuarioActual}</p>
+                    <p>Sesión iniciada como: ${usuarioActual.email}</p>
                     <button onclick="cerrarSesion()">Cerrar Sesión</button>
                 `;
                 contenidoPrincipal.style.display = 'block';
@@ -428,11 +447,11 @@
             }
         }
 
-        // Inicialización
-        window.onload = function() {
-            usuarioActual = localStorage.getItem('usuarioActual');
+        // Escuchar cambios en el estado de autenticación
+        auth.onAuthStateChanged(user => {
+            usuarioActual = user;
             actualizarInterfaz();
-        };
+        });
     </script>
 </body>
 </html>
